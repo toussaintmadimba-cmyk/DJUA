@@ -4,6 +4,7 @@
 #include "src/sensors/gps.h"
 #include "src/telemetry/telemetry.h"
 #include "src/communication/internet.h"
+#include "src/communication/mqtt.h"
 static unsigned long lastTelemetryTime = 0;
 // =====================================================
 // SETUP
@@ -51,6 +52,7 @@ void setup()
     // =================================================
 
     initInternet();
+    initMQTT();
 
     lastTelemetryTime = millis();
 
@@ -70,6 +72,7 @@ void loop()
 
     
     updateInternet();
+    updateMQTT();
 
     unsigned long now = millis();
 
@@ -169,23 +172,23 @@ void loop()
         );
 
     // =================================================
-    // ENVOI BACKEND
+    // ENVOI MQTT
     // =================================================
 
-    if (
-        sendTelemetryToBackend(
-            telemetry
-        )
-    )
+    sendTelemetryToMQTT(telemetry);
+
+#if ENABLE_HTTP_BACKEND
+    // =================================================
+    // ENVOI BACKEND HTTP (optionnel)
+    // =================================================
+
+    if (sendTelemetryToBackend(telemetry))
     {
-        Serial.println(
-            "[BACKEND] TELEMETRIE ACCEPTEE"
-        );
+        Serial.println("[BACKEND] TELEMETRIE ACCEPTEE");
     }
     else
     {
-        Serial.println(
-            "[BACKEND] ECHEC ENVOI"
-        );
+        Serial.println("[BACKEND] ECHEC ENVOI");
     }
+#endif
 }
