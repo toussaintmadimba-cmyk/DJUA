@@ -30,7 +30,7 @@ static bool connectMQTT()
     Serial.print("[MQTT] Connexion a ");
     Serial.println(MQTT_BROKER_HOST);
 
-    String clientId = String("djua-") + DEVICE_ID;
+    String clientId = String("djua-")  + DEVICE_ID;
     String willTopic = statusTopic();
 
     if (!mqttClient.connect(clientId.c_str(), willTopic.c_str(), 0, true, "offline"))
