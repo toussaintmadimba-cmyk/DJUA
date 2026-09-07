@@ -19,10 +19,10 @@ void initGPS();
 // A appeler continuellement dans loop()
 void updateGPS();
 
-// Retourne la derniere position connue par le module
+// Retourne la derniere position seulement si elle est valide et recente
 GPSData readGPS();
 
-// Indique si le GPS dispose actuellement d'une position
+// Indique si le GPS dispose actuellement d'une position valide et recente
 bool hasGPSFix();
 
 #endif

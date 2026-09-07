@@ -5,6 +5,7 @@
 
 #include "../sensors/power_sensor.h"
 #include "../sensors/gps.h"
+#include "../sensors/rtc_ds1302.h"
 
 // =====================================================
 // IOT BOX - STRUCTURE DE TELEMETRIE
@@ -12,6 +13,10 @@
 
 struct TelemetryData
 {
+    // HORODATAGE REEL DS1302 AU FORMAT ISO 8601
+    char timestamp[32];
+    bool timestampValid;
+
     // GPS REEL
     double latitude;
     double longitude;
@@ -26,12 +31,6 @@ struct TelemetryData
     float solarCurrent;
     float solarPower;
     float solarEnergyIntervalWh;
-
-    // CHARGE DC - PAS ENCORE MESURE
-    float dcLoadVoltage;
-    float dcLoadCurrent;
-    float dcLoadPower;
-    float dcLoadEnergyIntervalWh;
 
     // CHARGE AC - PAS ENCORE MESURE
     float acLoadVoltage;
@@ -48,6 +47,7 @@ struct TelemetryData
 TelemetryData buildTelemetry(
     const PowerData& battery,
     const GPSData& gps,
+    const RTCData& rtc,
     unsigned long intervalSeconds
 );
 

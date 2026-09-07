@@ -2,6 +2,7 @@
 #include "src/config.h"
 #include "src/sensors/power_sensor.h"
 #include "src/sensors/gps.h"
+#include "src/sensors/rtc_ds1302.h"
 #include "src/telemetry/telemetry.h"
 #include "src/communication/internet.h"
 #include "src/communication/mqtt.h"
@@ -46,6 +47,22 @@ void setup()
 
     Serial.println();
     initGPS();
+
+    // =================================================
+    // HORLOGE RTC DS1302
+    // =================================================
+
+    Serial.println();
+    Serial.println("[DS1302] Initialisation...");
+
+    if (initRTC())
+    {
+        Serial.println("[DS1302] HORLOGE OK");
+    }
+    else
+    {
+        Serial.println("[DS1302] ERREUR - MODE DE SECOURS ACTIF");
+    }
 
     // =================================================
     // INTERNET
@@ -156,9 +173,15 @@ void loop()
     else
     {
         Serial.println(
-            "[GPS] Pas de FIX - envoi 0.0 / 0.0"
+            "[GPS] Position non exploitable - envoi 0.0 / 0.0"
         );
     }
+
+    // =================================================
+    // HORLOGE RTC DS1302
+    // =================================================
+
+    RTCData clock = readRTC();
 
     // =================================================
     // CONSTRUCTION TELEMETRIE
@@ -168,8 +191,21 @@ void loop()
         buildTelemetry(
             battery,
             location,
+            clock,
             intervalSeconds
         );
+
+    if (telemetry.timestampValid)
+    {
+        Serial.print("[DS1302] Timestamp : ");
+        Serial.println(telemetry.timestamp);
+    }
+    else
+    {
+        Serial.println(
+            "[DS1302] Timestamp invalide - utilisation du secours."
+        );
+    }
 
     // =================================================
     // ENVOI MQTT

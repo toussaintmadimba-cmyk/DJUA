@@ -7,10 +7,26 @@
 TelemetryData buildTelemetry(
     const PowerData& battery,
     const GPSData& gps,
+    const RTCData& rtc,
     unsigned long intervalSeconds
 )
 {
-    TelemetryData data;
+    TelemetryData data = {};
+
+    // =================================================
+    // HORODATAGE REEL DS1302
+    // =================================================
+
+    data.timestampValid = formatRTCTimestamp(
+        rtc,
+        data.timestamp,
+        sizeof(data.timestamp)
+    );
+
+    if (!data.timestampValid)
+    {
+        data.timestamp[0] = '\0';
+    }
 
     // =================================================
     // GPS REEL
@@ -48,13 +64,6 @@ TelemetryData buildTelemetry(
     data.solarCurrent = 0.0;
     data.solarPower = 0.0;
     data.solarEnergyIntervalWh = 0.0;
-
-    // DC LOAD
-
-    data.dcLoadVoltage = 0.0;
-    data.dcLoadCurrent = 0.0;
-    data.dcLoadPower = 0.0;
-    data.dcLoadEnergyIntervalWh = 0.0;
 
     // AC LOAD
    

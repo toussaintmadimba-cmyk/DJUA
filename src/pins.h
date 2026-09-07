@@ -14,6 +14,12 @@
 #define GPS_RX_PIN 16
 #define GPS_TX_PIN 17
 
+// ---------- RTC DS1302 / THREE-WIRE ----------
+
+#define DS1302_DATA_PIN 25
+#define DS1302_CLOCK_PIN 26
+#define DS1302_CE_PIN 27
+
 // ---------- FUTUR SIM800C ----------
 
 // #define GSM_RX_PIN 

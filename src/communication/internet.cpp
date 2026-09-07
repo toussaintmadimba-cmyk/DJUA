@@ -125,26 +125,30 @@ bool sendTelemetryToBackend(const TelemetryData& data)
     doc["longitude"] = data.longitude;
 
     // =================================================
-    // TIMESTAMP
-    //
-    // On conserve pour l'instant le meme format
-    // utilise par le firmware deja valide.
+    // TIMESTAMP DS1302 OU REPLI SUR LE FORMAT HISTORIQUE
     // =================================================
 
-    char timeBuffer[32];
+    if (data.timestampValid)
+    {
+        doc["timestamp"] = data.timestamp;
+        doc["timezone"] = RTC_TIMEZONE_LABEL;
+    }
+    else
+    {
+        char timeBuffer[32];
+        unsigned long seconds = millis() / 1000;
 
-    unsigned long seconds = millis() / 1000;
+        snprintf(
+            timeBuffer,
+            sizeof(timeBuffer),
+            "T%02lu:%02lu:%02luZ",
+            (seconds / 3600) % 24,
+            (seconds / 60) % 60,
+            seconds % 60
+        );
 
-    snprintf(
-        timeBuffer,
-        sizeof(timeBuffer),
-        "T%02lu:%02lu:%02luZ",
-        (seconds / 3600) % 24,
-        (seconds / 60) % 60,
-        seconds % 60
-    );
-
-    doc["timestamp"] = timeBuffer;
+        doc["timestamp"] = timeBuffer;
+    }
 
     doc["interval_seconds"] =
         data.intervalSeconds;
@@ -183,25 +187,6 @@ bool sendTelemetryToBackend(const TelemetryData& data)
 
     battery["power_w"] =
         data.batteryPower;
-
-    // =================================================
-    // DC LOAD
-    // =================================================
-
-    JsonObject dcLoad =
-        doc.createNestedObject("dc_load");
-
-    dcLoad["voltage_v"] =
-        data.dcLoadVoltage;
-
-    dcLoad["current_a"] =
-        data.dcLoadCurrent;
-
-    dcLoad["power_w"] =
-        data.dcLoadPower;
-
-    dcLoad["energy_interval_wh"] =
-        data.dcLoadEnergyIntervalWh;
 
     // =================================================
     // AC LOAD

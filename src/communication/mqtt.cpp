@@ -85,7 +85,15 @@ bool sendTelemetryToMQTT(const TelemetryData& data)
 
     StaticJsonDocument<1024> doc;
     doc["kit_id"] = DEVICE_ID;
+    // Conserve timestamp_ms pour la compatibilite avec les consommateurs actuels.
     doc["timestamp_ms"] = millis();
+
+    if (data.timestampValid)
+    {
+        doc["timestamp"] = data.timestamp;
+        doc["timezone"] = RTC_TIMEZONE_LABEL;
+    }
+
     doc["interval_seconds"] = data.intervalSeconds;
     doc["latitude"] = data.latitude;
     doc["longitude"] = data.longitude;
@@ -100,12 +108,6 @@ bool sendTelemetryToMQTT(const TelemetryData& data)
     solar["current_a"] = data.solarCurrent;
     solar["power_w"] = data.solarPower;
     solar["energy_interval_wh"] = data.solarEnergyIntervalWh;
-
-    JsonObject dcLoad = doc.createNestedObject("dc_load");
-    dcLoad["voltage_v"] = data.dcLoadVoltage;
-    dcLoad["current_a"] = data.dcLoadCurrent;
-    dcLoad["power_w"] = data.dcLoadPower;
-    dcLoad["energy_interval_wh"] = data.dcLoadEnergyIntervalWh;
 
     JsonObject acLoad = doc.createNestedObject("ac_load");
     acLoad["voltage_v"] = data.acLoadVoltage;

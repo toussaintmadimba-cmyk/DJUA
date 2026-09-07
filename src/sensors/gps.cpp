@@ -58,12 +58,31 @@ GPSData readGPS()
     data.longitude = 0.0;
     data.valid = false;
 
-    if (gps.location.isValid())
+    if (!gps.location.isValid())
     {
-        data.latitude = gps.location.lat();
-        data.longitude = gps.location.lng();
-        data.valid = true;
+        Serial.println("[GPS] Sans FIX - aucune position valide.");
+        return data;
     }
+
+    const unsigned long locationAge = gps.location.age();
+
+    if (locationAge > GPS_MAX_AGE_MS)
+    {
+        Serial.print("[GPS] FIX ancien/perime (age ");
+        Serial.print(locationAge);
+        Serial.print(" ms, limite ");
+        Serial.print(GPS_MAX_AGE_MS);
+        Serial.println(" ms).");
+        return data;
+    }
+
+    data.latitude = gps.location.lat();
+    data.longitude = gps.location.lng();
+    data.valid = true;
+
+    Serial.print("[GPS] FIX valide et recent (age ");
+    Serial.print(locationAge);
+    Serial.println(" ms).");
 
     return data;
 }
@@ -72,5 +91,7 @@ GPSData readGPS()
 
 bool hasGPSFix()
 {
-    return gps.location.isValid();
+    return
+        gps.location.isValid() &&
+        gps.location.age() <= GPS_MAX_AGE_MS;
 }
