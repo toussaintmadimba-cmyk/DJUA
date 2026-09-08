@@ -3,10 +3,103 @@
 #include "src/sensors/power_sensor.h"
 #include "src/sensors/gps.h"
 #include "src/sensors/rtc_ds1302.h"
+#include "src/geofencing/geofence.h"
 #include "src/telemetry/telemetry.h"
 #include "src/communication/internet.h"
 #include "src/communication/mqtt.h"
 static unsigned long lastTelemetryTime = 0;
+static unsigned long lastGeofenceCheckTime = 0;
+
+static void reportGeofenceEvent(
+    const GeofenceResult& result,
+    const char* timestamp,
+    bool timestampValid
+)
+{
+    Serial.println(
+        result.exitEvent
+            ? "[ALERTE] GEOFENCE_EXIT"
+            : "[INFO] GEOFENCE_ENTER"
+    );
+
+    Serial.print("[GEOFENCE_EVENT] device=");
+    Serial.print(result.deviceId);
+    Serial.print(" | type=");
+    Serial.print(geofenceEventToString(result.eventType));
+    Serial.print(" | timestamp=");
+    Serial.print(timestampValid ? timestamp : "indisponible");
+    Serial.print(" | latitude=");
+    Serial.print(result.latitude, 6);
+    Serial.print(" | longitude=");
+    Serial.print(result.longitude, 6);
+    Serial.print(" | distance_m=");
+    Serial.println(result.distanceMeters, 1);
+
+    // TODO: transmettre GEOFENCE_EXIT/GEOFENCE_ENTER via le module SMS.
+}
+
+static void updateGeofenceMonitoring()
+{
+    if (!GEOFENCE_ENABLED)
+    {
+        return;
+    }
+
+    const unsigned long now = millis();
+
+    if (
+        now - lastGeofenceCheckTime <
+        GEOFENCE_CHECK_INTERVAL_MS
+    )
+    {
+        return;
+    }
+
+    // Ne pas rejouer plusieurs controles sur la meme position apres un retard.
+    lastGeofenceCheckTime = now;
+
+    const GPSData position = readGPS();
+    const GeofenceResult result = updateGeofence(position);
+
+    const RTCData clock = readRTC();
+    char timestamp[32] = {};
+    const bool timestampValid = formatRTCTimestamp(
+        clock,
+        timestamp,
+        sizeof(timestamp)
+    );
+
+    // Chaque controle est publie pour permettre le suivi d'un test reel.
+    sendGeofenceToMQTT(result, timestamp, timestampValid);
+
+    if (!result.positionUsable)
+    {
+        Serial.println(
+            "[GEOFENCE] Verification ignoree : GPS invalide ou trop ancien"
+        );
+        return;
+    }
+
+    Serial.print("[GEOFENCE] GPS valide | Distance : ");
+    Serial.print(result.distanceMeters, 1);
+    Serial.print(" m | Etat : ");
+    Serial.println(geofenceStateToString(result.state));
+
+    if (result.confirmationCount > 0)
+    {
+        Serial.print("[GEOFENCE] Candidat ");
+        Serial.print(geofenceStateToString(result.candidateState));
+        Serial.print(' ');
+        Serial.print(result.confirmationCount);
+        Serial.print('/');
+        Serial.println(GEOFENCE_CONFIRM_COUNT);
+    }
+
+    if (result.exitEvent || result.enterEvent)
+    {
+        reportGeofenceEvent(result, timestamp, timestampValid);
+    }
+}
 // =====================================================
 // SETUP
 // =====================================================
@@ -47,6 +140,7 @@ void setup()
 
     Serial.println();
     initGPS();
+    initGeofence();
 
     // =================================================
     // HORLOGE RTC DS1302
@@ -72,6 +166,7 @@ void setup()
     initMQTT();
 
     lastTelemetryTime = millis();
+    lastGeofenceCheckTime = millis();
 
     Serial.println();
     Serial.println("[SYSTEM] Initialisation terminee.");
@@ -86,6 +181,9 @@ void loop()
 {
     
     updateGPS();
+
+    // Priorite a la surveillance locale avant les transports reseau.
+    updateGeofenceMonitoring();
 
     
     updateInternet();

@@ -16,12 +16,13 @@ DS1302 ──┘                  test.mosquitto.org        HTTP + WebSocket
 Chemin actif des données :
 
 1. L'ESP32 mesure la batterie avec le capteur INA219.
-2. Il récupère la dernière position valide décodée depuis le GPS NEO-6M.
-3. Il lit la date et l'heure locale conservées par le DS1302.
-4. Toutes les 10 secondes environ, il construit un objet de télémétrie.
-5. Il publie cet objet en JSON sur MQTT et, si activé, directement en HTTP.
-6. L'API s'abonne au topic MQTT, reçoit le JSON et le conserve en mémoire.
-7. Un dashboard ou un autre client consulte ensuite les données par HTTP ou WebSocket.
+2. Il récupère la dernière position valide et récente décodée depuis le GPS NEO-6M.
+3. Il vérifie localement la geofence toutes les 5 secondes.
+4. Il lit la date et l'heure locale conservées par le DS1302.
+5. Toutes les 30 minutes environ, il construit un objet de télémétrie.
+6. Il publie cet objet en JSON sur MQTT et, si activé, directement en HTTP.
+7. L'API s'abonne au topic MQTT, reçoit le JSON et le conserve en mémoire.
+8. Un dashboard ou un autre client consulte ensuite les données par HTTP ou WebSocket.
 
 L'envoi direct du firmware vers un backend HTTP est actuellement activé par `ENABLE_HTTP_BACKEND = 1`.
 
@@ -37,10 +38,11 @@ La fonction `setup()` effectue les opérations suivantes dans cet ordre :
 2. affichage de l'identifiant du kit ;
 3. initialisation du capteur INA219 ;
 4. initialisation du GPS NEO-6M ;
-5. initialisation de l'horloge RTC DS1302 ;
-6. tentative de connexion au Wi-Fi, avec un délai maximal de 15 secondes ;
-7. configuration du client MQTT ;
-8. démarrage du compteur utilisé pour l'intervalle de télémétrie.
+5. initialisation de la machine d'état geofence ;
+6. initialisation de l'horloge RTC DS1302 ;
+7. tentative de connexion au Wi-Fi, avec un délai maximal de 15 secondes ;
+8. configuration du client MQTT ;
+9. démarrage des compteurs geofence et télémétrie.
 
 L'identifiant actuellement configuré est `DJUA-KIN-000001`.
 
@@ -51,7 +53,8 @@ L'identifiant actuellement configuré est `DJUA-KIN-000001`.
 - lit les caractères disponibles sur l'UART du GPS afin d'alimenter TinyGPSPlus ;
 - contrôle le Wi-Fi et tente une reconnexion toutes les 10 secondes s'il est coupé ;
 - contrôle MQTT et tente une reconnexion toutes les 10 secondes s'il est coupé ;
-- attend que l'intervalle de télémétrie de 10 secondes soit écoulé ;
+- vérifie localement la geofence toutes les 5 secondes avec une position récente ;
+- attend que l'intervalle de télémétrie de 30 minutes soit écoulé ;
 - lit le capteur INA219 ;
 - récupère la position GPS disponible ;
 - lit la date et l'heure du DS1302 ;
@@ -98,9 +101,53 @@ Configuration actuelle :
 | RX ESP32 | GPIO 16 |
 | TX ESP32 | GPIO 17 |
 
-TinyGPSPlus décode continuellement les données reçues. Si une position est considérée comme valide, sa latitude et sa longitude sont utilisées. Sinon, le firmware envoie `0.0` pour les deux coordonnées.
+TinyGPSPlus décode continuellement les données reçues. Une position est utilisable uniquement si elle est valide et si son âge ne dépasse pas `GPS_MAX_AGE_MS`, actuellement fixé à 5 secondes. Sinon, le firmware envoie `0.0` pour les deux coordonnées.
 
-Le code contrôle la validité de la position, mais pas son âge. Une position précédemment valide peut donc rester utilisée même si elle n'est plus récente.
+Un ancien fix ne peut donc pas être utilisé comme position courante par la télémétrie ou le geofencing.
+
+### Geofencing local et publication MQTT
+
+La logique se trouve dans [`src/geofencing/geofence.cpp`](src/geofencing/geofence.cpp) et [`src/geofencing/geofence.h`](src/geofencing/geofence.h). La décision reste locale et continue donc à fonctionner sans réseau. Son résultat est également publié par [`src/communication/mqtt.cpp`](src/communication/mqtt.cpp).
+
+- zone circulaire centrée sur les coordonnées configurées ;
+- rayon d'entrée de 500 m et rayon de sortie de 550 m ;
+- vérification toutes les 5 secondes ;
+- trois positions consécutives requises avant une transition ;
+- états `UNKNOWN`, `INSIDE` et `OUTSIDE` ;
+- événements uniques `GEOFENCE_EXIT` et `GEOFENCE_ENTER` lors des transitions ;
+- conservation du dernier état confirmé lorsque le GPS est invalide ou trop ancien.
+
+Chaque contrôle, y compris lorsqu'aucune position GPS récente n'est disponible, est publié avec conservation sur `djua/test/DJUA-KIN-000001/geofence`. Les transitions sont en plus publiées sans conservation sur `djua/test/DJUA-KIN-000001/geofence/events`. Une transition qui coïncide avec une coupure MQTT est conservée en RAM et retentée après reconnexion ; elle ne survit pas à un redémarrage électrique.
+
+Exemple de charge utile geofence :
+
+```json
+{
+  "kit_id": "DJUA-KIN-000001",
+  "timestamp_ms": 123456,
+  "timestamp": "2026-09-04T15:42:05+01:00",
+  "timezone": "GMT+1",
+  "state": "INSIDE",
+  "event": "NONE",
+  "position_usable": true,
+  "latitude": -4.3251,
+  "longitude": 15.3222,
+  "distance_m": 0.0,
+  "zone": {
+    "center_latitude": -4.3251,
+    "center_longitude": 15.3222,
+    "enter_radius_m": 500.0,
+    "exit_radius_m": 550.0
+  },
+  "confirmation": {
+    "candidate_state": "UNKNOWN",
+    "count": 0,
+    "required": 3
+  }
+}
+```
+
+`event` prend la valeur `GEOFENCE_EXIT` ou `GEOFENCE_ENTER` lors d'une transition confirmée. Quand `position_usable` vaut `false`, les champs `latitude`, `longitude` et `distance_m` valent `null`, tandis que `state` conserve le dernier état confirmé. La transmission par SMS reste à raccorder.
 
 ### Horloge RTC DS1302
 
@@ -129,7 +176,7 @@ La structure complète est définie dans [`src/telemetry/telemetry.h`](src/telem
 | Groupe | État actuel |
 | --- | --- |
 | Horodatage | Réel depuis le DS1302 avec indication `GMT+1`, avec repli si invalide |
-| GPS | Réel si un fix est disponible, sinon latitude/longitude à `0.0` |
+| GPS | Réel si un fix valide et récent est disponible, sinon latitude/longitude à `0.0` |
 | Batterie | Mesure réelle du INA219 |
 | Solaire | Non mesuré, toutes les valeurs sont à `0.0` |
 | Charge AC | Non mesurée, toutes les valeurs sont à `0.0` |
@@ -192,12 +239,14 @@ Configuration active par défaut :
 | Chiffrement TLS | Non |
 | Authentification | Non |
 | Topic télémétrie | `djua/test/DJUA-KIN-000001/telemetry` |
+| Topic dernier contrôle geofence | `djua/test/DJUA-KIN-000001/geofence` |
+| Topic événements geofence | `djua/test/DJUA-KIN-000001/geofence/events` |
 | Topic état | `djua/test/DJUA-KIN-000001/status` |
 | Taille du buffer MQTT | 1024 octets |
 
 Lors d'une connexion réussie, l'ESP32 publie `online` sur le topic d'état avec conservation du message. Un Last Will MQTT publiera `offline` sur ce même topic si la connexion disparaît de manière anormale.
 
-Les télémétries sont publiées sans conservation et avec le QoS par défaut de PubSubClient, soit QoS 0. Si MQTT est déconnecté au moment de l'envoi, le message est perdu : le firmware ne possède actuellement ni file d'attente locale ni mécanisme de renvoi.
+Les télémétries sont publiées sans conservation et avec le QoS par défaut de PubSubClient, soit QoS 0. Une télémétrie émise pendant une coupure reste perdue. Pour le geofencing, le dernier contrôle est retenu par le broker et une transition non envoyée est gardée temporairement en RAM jusqu'à la reconnexion MQTT.
 
 ### Backend HTTP optionnel
 
@@ -338,7 +387,6 @@ Avant une utilisation en production, les points suivants doivent être traités 
 - les données perdues pendant une coupure MQTT ne sont pas renvoyées ;
 - le fuseau du DS1302 est fixe et ne gère pas automatiquement un changement saisonnier ;
 - les mesures solaire et AC ne sont pas encore implémentées ;
-- le GPS ne vérifie pas la fraîcheur du dernier fix ;
 - GSM et SMS ne sont pas implémentés.
 
 Ces éléments décrivent l'état actuel ; ils ne signifient pas que le flux de test est inutilisable. Pour les essais, le chemin ESP32 → MQTT → FastAPI est déjà cohérent et opérationnel dès que l'ESP32 et l'API ont accès au broker.

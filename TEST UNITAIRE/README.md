@@ -8,6 +8,7 @@ Ce dossier contient des tests autonomes. Il est volontairement séparé du firmw
 | --- | --- |
 | Horloge RTC DS1302 | Premier test disponible dans [`DS1302`](DS1302/README.md) |
 | GPS NEO-6M | Test matériel disponible dans [`NEO-6M`](NEO-6M/README.md) |
+| Geofencing | Test à coordonnées simulées dans [`GEOFENCE/geofence_test`](GEOFENCE/geofence_test/geofence_test.ino) |
 
 ## Organisation retenue
 

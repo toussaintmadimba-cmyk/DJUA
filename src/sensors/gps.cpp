@@ -50,6 +50,16 @@ void updateGPS()
 
 // LECTURE
 
+bool isGPSLocationUsable(
+    bool locationValid,
+    unsigned long locationAgeMs
+)
+{
+    return
+        locationValid &&
+        locationAgeMs <= GPS_MAX_AGE_MS;
+}
+
 GPSData readGPS()
 {
     GPSData data;
@@ -58,15 +68,16 @@ GPSData readGPS()
     data.longitude = 0.0;
     data.valid = false;
 
-    if (!gps.location.isValid())
+    const bool locationValid = gps.location.isValid();
+    const unsigned long locationAge = gps.location.age();
+
+    if (!locationValid)
     {
         Serial.println("[GPS] Sans FIX - aucune position valide.");
         return data;
     }
 
-    const unsigned long locationAge = gps.location.age();
-
-    if (locationAge > GPS_MAX_AGE_MS)
+    if (!isGPSLocationUsable(locationValid, locationAge))
     {
         Serial.print("[GPS] FIX ancien/perime (age ");
         Serial.print(locationAge);
@@ -91,7 +102,8 @@ GPSData readGPS()
 
 bool hasGPSFix()
 {
-    return
-        gps.location.isValid() &&
-        gps.location.age() <= GPS_MAX_AGE_MS;
+    return isGPSLocationUsable(
+        gps.location.isValid(),
+        gps.location.age()
+    );
 }
