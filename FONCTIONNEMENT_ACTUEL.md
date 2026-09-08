@@ -242,13 +242,13 @@ Configuration active par défaut :
 | Topic dernier contrôle geofence | `djua/test/DJUA-KIN-000001/geofence` |
 | Topic événements geofence | `djua/test/DJUA-KIN-000001/geofence/events` |
 | Topic état | `djua/test/DJUA-KIN-000001/status` |
-| Client MQTT | ESP-MQTT natif de l'ESP32 |
-| QoS de publication | 1 (accusé de réception du broker) |
-| File persistante | LittleFS, 512 messages par défaut |
+| Client MQTT | PubSubClient |
+| QoS de publication | 0 |
+| File persistante | Aucune ; événements geofence conservés temporairement en RAM |
 
 Lors d'une connexion réussie, l'ESP32 publie `online` sur le topic d'état avec conservation du message. Un Last Will MQTT publiera `offline` sur ce même topic si la connexion disparaît de manière anormale.
 
-Les télémétries et les contrôles geofence sont écrits dans une file LittleFS avant leur publication MQTT QoS 1. Chaque message contient un `message_id` persistant et n'est retiré de la file qu'après l'accusé de réception du broker. L'API utilise également QoS 1 avec une session MQTT persistante : le broker peut donc lui remettre les messages reçus pendant une indisponibilité de l'API. Une répétition QoS 1 est possible après une coupure, mais l'API déduplique les messages par `message_id`. La file est limitée par `MQTT_QUEUE_MAX_MESSAGES`; son dimensionnement doit couvrir la durée maximale de coupure attendue. Le broker de production doit lui aussi activer sa persistance.
+Les télémétries sont publiées sans conservation et avec le QoS par défaut de PubSubClient, soit QoS 0. Une télémétrie émise pendant une coupure reste perdue. Pour le geofencing, le dernier contrôle est retenu par le broker et une transition non envoyée est gardée temporairement en RAM jusqu'à la reconnexion MQTT.
 
 ### Backend HTTP optionnel
 
@@ -363,7 +363,7 @@ Le code utilise les bibliothèques suivantes :
 - `TinyGPSPlus` ;
 - `Rtc by Makuna` pour le DS1302 ;
 - `ArduinoJson` ;
-- ESP-MQTT natif de l'ESP32 et LittleFS ;
+- `PubSubClient` ;
 - les bibliothèques ESP32 intégrées `WiFi`, `HTTPClient` et `Wire`.
 
 Le dépôt ne contient actuellement ni `platformio.ini` ni liste Arduino formelle des versions. La reproductibilité de la compilation du firmware dépend donc des bibliothèques installées dans l'environnement Arduino utilisé.

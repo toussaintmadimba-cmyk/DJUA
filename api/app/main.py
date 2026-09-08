@@ -32,8 +32,6 @@ state_lock = threading.Lock()
 latest_telemetry_by_device: dict[str, dict[str, Any]] = {}
 latest_geofence_by_device: dict[str, dict[str, Any]] = {}
 history: deque[dict[str, Any]] = deque(maxlen=HISTORY_LIMIT)
-processed_message_ids: deque[str] = deque(maxlen=HISTORY_LIMIT)
-processed_message_id_set: set[str] = set()
 mqtt_state = {"connected": False, "last_error": None}
 message_sequence = 0
 
@@ -82,9 +80,7 @@ def on_connect(
             mqtt_state.update(connected=False, last_error=message)
         return
 
-    # A persistent QoS 1 subscription lets the broker redeliver records that
-    # arrived while this API process was temporarily disconnected.
-    client.subscribe(MQTT_TOPIC, qos=1)
+    client.subscribe(MQTT_TOPIC, qos=0)
     logger.info("Subscribed to MQTT topic %s", MQTT_TOPIC)
     with state_lock:
         mqtt_state.update(connected=True, last_error=None)
@@ -125,17 +121,6 @@ def on_message(_client: mqtt.Client, _userdata: Any, message: mqtt.MQTTMessage) 
         logger.warning("Ignored JSON payload that was not an object on %s", message.topic)
         return
 
-    message_id = payload.get("message_id")
-    if isinstance(message_id, str) and message_id:
-        with state_lock:
-            if message_id in processed_message_id_set:
-                logger.info("Ignored duplicate MQTT message %s", message_id)
-                return
-            if len(processed_message_ids) == processed_message_ids.maxlen:
-                processed_message_id_set.discard(processed_message_ids[0])
-            processed_message_ids.append(message_id)
-            processed_message_id_set.add(message_id)
-
     device_id = device_id_for(message.topic, payload)
     record = {
         "device_id": device_id,
@@ -158,12 +143,7 @@ def on_message(_client: mqtt.Client, _userdata: Any, message: mqtt.MQTTMessage) 
 
 
 def make_mqtt_client() -> mqtt.Client:
-    client = mqtt.Client(
-        mqtt.CallbackAPIVersion.VERSION2,
-        client_id="djua-telemetry-api",
-        protocol=mqtt.MQTTv311,
-        clean_session=False,
-    )
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="djua-telemetry-api")
     username = os.getenv("MQTT_USERNAME")
     password = os.getenv("MQTT_PASSWORD")
     if username:

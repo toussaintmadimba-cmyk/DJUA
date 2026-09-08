@@ -52,14 +52,10 @@ distance to the zone, state, transition event, and confirmation calculation.
 
 ## Delivery reliability
 
-The firmware stores outgoing telemetry and geofence records in LittleFS before
-publication. It sends them with MQTT QoS 1 and removes a record only after the
-broker acknowledges it. Each record contains a persistent `message_id`; the API
-uses it to ignore QoS 1 retransmission duplicates. The API subscribes with QoS 1
-and a persistent MQTT session, allowing the broker to redeliver records after an
-API reconnect. The outgoing queue is bounded by `MQTT_QUEUE_MAX_MESSAGES` in the
-firmware configuration, so this value must cover the expected maximum network
-outage. Production brokers must also enable persistent sessions/storage.
+The current Arduino-compatible firmware uses PubSubClient with MQTT QoS 0. A
+telemetry record emitted while the broker connection is unavailable is not
+retried. Geofence events are temporarily retained in RAM until reconnection,
+but do not survive an ESP32 restart.
 
 Messages are stored in memory only (up to 500 by default), so restarting the
 API clears its history. Set `TELEMETRY_HISTORY_LIMIT` to change that limit.

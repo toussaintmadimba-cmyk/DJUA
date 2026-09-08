@@ -13,8 +13,6 @@ class MqttContractTests(unittest.TestCase):
             main.latest_telemetry_by_device.clear()
             main.latest_geofence_by_device.clear()
             main.history.clear()
-            main.processed_message_ids.clear()
-            main.processed_message_id_set.clear()
             main.message_sequence = 0
 
     def publish(self, topic: str, payload: dict[str, object]) -> None:
@@ -71,13 +69,6 @@ class MqttContractTests(unittest.TestCase):
         )
         main.on_message(None, None, message)
         self.assertFalse(main.history)
-
-    def test_qos_retry_with_the_same_message_id_is_deduplicated(self) -> None:
-        payload = {"kit_id": "DJUA-KIN-000001", "message_id": "DJUA-KIN-000001-7"}
-        self.publish("djua/test/DJUA-KIN-000001/telemetry", payload)
-        self.publish("djua/test/DJUA-KIN-000001/telemetry", payload)
-        self.assertEqual(len(main.history), 1)
-
 
 if __name__ == "__main__":
     unittest.main()

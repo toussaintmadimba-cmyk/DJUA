@@ -48,14 +48,6 @@
 #define MQTT_BROKER_PORT 1883
 #define MQTT_TOPIC_PREFIX "djua/test"
 #define MQTT_RETRY_INTERVAL_MS 10000UL
-// QoS 1 provides a broker acknowledgement for each telemetry publication.
-#define MQTT_PUBLISH_QOS 1
-// Persisted outgoing messages survive a Wi-Fi outage and an ESP32 restart.
-// Size this to cover the longest expected outage; 512 messages is about
-// 42 minutes when a geofence snapshot is emitted every 5 seconds.
-#define MQTT_QUEUE_MAX_MESSAGES 512U
-#define MQTT_QUEUE_MAX_TOPIC_LENGTH 96U
-#define MQTT_QUEUE_MAX_PAYLOAD_LENGTH 1024U
 
 // TELEMETRIE NORMALE : UNE TRANSMISSION TOUTES LES 30 MINUTES
 #define TELEMETRY_INTERVAL_MS 1800000UL
