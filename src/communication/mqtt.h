@@ -6,10 +6,11 @@
 #include "../geofencing/geofence.h"
 #include "../telemetry/telemetry.h"
 
-// Configures the MQTT client. Call after Wi-Fi initialisation.
+// Configures the MQTT QoS 1 client and its persistent outgoing queue.
+// Call after Wi-Fi initialisation.
 void initMQTT();
 
-// Maintains the MQTT connection. Call continuously from loop().
+// Sends queued messages once the broker is connected. Call continuously from loop().
 void updateMQTT();
 
 // Publishes a telemetry record on the device-specific telemetry topic.
@@ -23,5 +24,8 @@ bool sendGeofenceToMQTT(
 );
 
 bool isMQTTConnected();
+
+// Number of sensor/geofence records waiting for a broker acknowledgement.
+uint16_t pendingMQTTMessageCount();
 
 #endif

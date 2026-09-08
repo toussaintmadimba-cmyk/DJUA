@@ -23,14 +23,23 @@ logger = logging.getLogger("djua-api")
 
 MQTT_BROKER_HOST = os.getenv("MQTT_BROKER_HOST", "test.mosquitto.org")
 MQTT_BROKER_PORT = int(os.getenv("MQTT_BROKER_PORT", "1883"))
-MQTT_TOPIC = os.getenv("MQTT_TOPIC", "djua/test/+/telemetry")
+# Subscribe to every structured data channel emitted by each device:
+# telemetry, geofence snapshots, and geofence events.
+MQTT_TOPIC = os.getenv("MQTT_TOPIC", "djua/test/+/#")
 HISTORY_LIMIT = int(os.getenv("TELEMETRY_HISTORY_LIMIT", "500"))
 
 state_lock = threading.Lock()
-latest_by_device: dict[str, dict[str, Any]] = {}
+latest_telemetry_by_device: dict[str, dict[str, Any]] = {}
+latest_geofence_by_device: dict[str, dict[str, Any]] = {}
 history: deque[dict[str, Any]] = deque(maxlen=HISTORY_LIMIT)
+processed_message_ids: deque[str] = deque(maxlen=HISTORY_LIMIT)
+processed_message_id_set: set[str] = set()
 mqtt_state = {"connected": False, "last_error": None}
 message_sequence = 0
+
+MESSAGE_TYPE_TELEMETRY = "telemetry"
+MESSAGE_TYPE_GEOFENCE = "geofence"
+MESSAGE_TYPE_GEOFENCE_EVENT = "geofence_event"
 
 
 def utc_now() -> str:
@@ -47,6 +56,18 @@ def device_id_for(topic: str, payload: dict[str, Any]) -> str:
     return parts[-2] if len(parts) >= 2 else "unknown"
 
 
+def message_type_for(topic: str) -> str | None:
+    """Return the known device-data type represented by an MQTT topic."""
+    parts = topic.split("/")
+    if len(parts) == 4 and parts[-1] == "telemetry":
+        return MESSAGE_TYPE_TELEMETRY
+    if len(parts) == 4 and parts[-1] == "geofence":
+        return MESSAGE_TYPE_GEOFENCE
+    if len(parts) == 5 and parts[-2:] == ["geofence", "events"]:
+        return MESSAGE_TYPE_GEOFENCE_EVENT
+    return None
+
+
 def on_connect(
     client: mqtt.Client,
     _userdata: Any,
@@ -61,7 +82,9 @@ def on_connect(
             mqtt_state.update(connected=False, last_error=message)
         return
 
-    client.subscribe(MQTT_TOPIC, qos=0)
+    # A persistent QoS 1 subscription lets the broker redeliver records that
+    # arrived while this API process was temporarily disconnected.
+    client.subscribe(MQTT_TOPIC, qos=1)
     logger.info("Subscribed to MQTT topic %s", MQTT_TOPIC)
     with state_lock:
         mqtt_state.update(connected=True, last_error=None)
@@ -84,6 +107,14 @@ def on_disconnect(
 def on_message(_client: mqtt.Client, _userdata: Any, message: mqtt.MQTTMessage) -> None:
     global message_sequence
 
+    message_type = message_type_for(message.topic)
+    if message_type is None:
+        # The wildcard subscription can also receive non-data channels such as
+        # the retained online/offline status. They are intentionally excluded
+        # from the sensor-data API.
+        logger.debug("Ignored MQTT topic outside the data contract: %s", message.topic)
+        return
+
     try:
         payload = json.loads(message.payload.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -94,10 +125,22 @@ def on_message(_client: mqtt.Client, _userdata: Any, message: mqtt.MQTTMessage) 
         logger.warning("Ignored JSON payload that was not an object on %s", message.topic)
         return
 
+    message_id = payload.get("message_id")
+    if isinstance(message_id, str) and message_id:
+        with state_lock:
+            if message_id in processed_message_id_set:
+                logger.info("Ignored duplicate MQTT message %s", message_id)
+                return
+            if len(processed_message_ids) == processed_message_ids.maxlen:
+                processed_message_id_set.discard(processed_message_ids[0])
+            processed_message_ids.append(message_id)
+            processed_message_id_set.add(message_id)
+
     device_id = device_id_for(message.topic, payload)
     record = {
         "device_id": device_id,
         "topic": message.topic,
+        "message_type": message_type,
         "received_at": utc_now(),
         "data": payload,
     }
@@ -105,14 +148,22 @@ def on_message(_client: mqtt.Client, _userdata: Any, message: mqtt.MQTTMessage) 
     with state_lock:
         message_sequence += 1
         record["sequence"] = message_sequence
-        latest_by_device[device_id] = record
+        if message_type == MESSAGE_TYPE_TELEMETRY:
+            latest_telemetry_by_device[device_id] = record
+        else:
+            latest_geofence_by_device[device_id] = record
         history.append(record)
 
-    logger.info("Telemetry received from %s", device_id)
+    logger.info("%s received from %s", message_type, device_id)
 
 
 def make_mqtt_client() -> mqtt.Client:
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="djua-telemetry-api")
+    client = mqtt.Client(
+        mqtt.CallbackAPIVersion.VERSION2,
+        client_id="djua-telemetry-api",
+        protocol=mqtt.MQTTv311,
+        clean_session=False,
+    )
     username = os.getenv("MQTT_USERNAME")
     password = os.getenv("MQTT_PASSWORD")
     if username:
@@ -161,27 +212,34 @@ def health() -> dict[str, Any]:
             "status": "ok",
             "mqtt": dict(mqtt_state),
             "subscribed_topic": MQTT_TOPIC,
-            "known_devices": len(latest_by_device),
+            "known_devices": len(
+                set(latest_telemetry_by_device) | set(latest_geofence_by_device)
+            ),
         }
 
 
 @app.get("/devices")
 def devices() -> list[dict[str, Any]]:
     with state_lock:
+        device_ids = set(latest_telemetry_by_device) | set(latest_geofence_by_device)
         return [
             {
                 "device_id": device_id,
-                "last_received_at": record["received_at"],
-                "last_sequence": record["sequence"],
+                "last_telemetry_at": latest_telemetry_by_device.get(device_id, {}).get(
+                    "received_at"
+                ),
+                "last_geofence_at": latest_geofence_by_device.get(device_id, {}).get(
+                    "received_at"
+                ),
             }
-            for device_id, record in latest_by_device.items()
+            for device_id in sorted(device_ids)
         ]
 
 
 @app.get("/devices/{device_id}/telemetry/latest")
 def latest_telemetry(device_id: str) -> dict[str, Any]:
     with state_lock:
-        record = latest_by_device.get(device_id)
+        record = latest_telemetry_by_device.get(device_id)
     if record is None:
         raise HTTPException(status_code=404, detail="No telemetry has been received for this device.")
     return record
@@ -193,22 +251,71 @@ def telemetry_history(
     limit: int = Query(default=100, ge=1, le=HISTORY_LIMIT),
 ) -> list[dict[str, Any]]:
     with state_lock:
-        matching = [record for record in history if record["device_id"] == device_id]
+        matching = [
+            record
+            for record in history
+            if record["device_id"] == device_id
+            and record["message_type"] == MESSAGE_TYPE_TELEMETRY
+        ]
     return matching[-limit:]
 
 
-@app.websocket("/ws/telemetry")
-async def telemetry_stream(websocket: WebSocket) -> None:
-    """Sends each newly received message to the connected dashboard client."""
+@app.get("/devices/{device_id}/geofence/latest")
+def latest_geofence(device_id: str) -> dict[str, Any]:
+    with state_lock:
+        record = latest_geofence_by_device.get(device_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="No geofence data has been received for this device.")
+    return record
+
+
+@app.get("/devices/{device_id}/geofence")
+def geofence_history(
+    device_id: str,
+    limit: int = Query(default=100, ge=1, le=HISTORY_LIMIT),
+) -> list[dict[str, Any]]:
+    with state_lock:
+        matching = [
+            record
+            for record in history
+            if record["device_id"] == device_id
+            and record["message_type"]
+            in {MESSAGE_TYPE_GEOFENCE, MESSAGE_TYPE_GEOFENCE_EVENT}
+        ]
+    return matching[-limit:]
+
+
+async def stream_message_types(websocket: WebSocket, message_types: set[str]) -> None:
+    """Stream only the requested classes of structured MQTT data."""
     await websocket.accept()
     last_sent_sequence = 0
     try:
         while True:
             with state_lock:
-                records = [record for record in history if record["sequence"] > last_sent_sequence]
+                records = [
+                    record
+                    for record in history
+                    if record["sequence"] > last_sent_sequence
+                    and record["message_type"] in message_types
+                ]
             for record in records:
                 await websocket.send_json(record)
                 last_sent_sequence = record["sequence"]
             await asyncio.sleep(0.5)
     except WebSocketDisconnect:
         return
+
+
+@app.websocket("/ws/telemetry")
+async def telemetry_stream(websocket: WebSocket) -> None:
+    """Stream sensor telemetry, including direct and calculated values."""
+    await stream_message_types(websocket, {MESSAGE_TYPE_TELEMETRY})
+
+
+@app.websocket("/ws/geofence")
+async def geofence_stream(websocket: WebSocket) -> None:
+    """Stream geofence snapshots and confirmed enter/exit events."""
+    await stream_message_types(
+        websocket,
+        {MESSAGE_TYPE_GEOFENCE, MESSAGE_TYPE_GEOFENCE_EVENT},
+    )

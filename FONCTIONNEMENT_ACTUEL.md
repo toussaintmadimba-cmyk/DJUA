@@ -21,7 +21,7 @@ Chemin actif des données :
 4. Il lit la date et l'heure locale conservées par le DS1302.
 5. Toutes les 30 minutes environ, il construit un objet de télémétrie.
 6. Il publie cet objet en JSON sur MQTT et, si activé, directement en HTTP.
-7. L'API s'abonne au topic MQTT, reçoit le JSON et le conserve en mémoire.
+7. L'API s'abonne aux topics MQTT de télémétrie et de geofence, reçoit les JSON et les conserve en mémoire séparément.
 8. Un dashboard ou un autre client consulte ensuite les données par HTTP ou WebSocket.
 
 L'envoi direct du firmware vers un backend HTTP est actuellement activé par `ENABLE_HTTP_BACKEND = 1`.
@@ -242,11 +242,13 @@ Configuration active par défaut :
 | Topic dernier contrôle geofence | `djua/test/DJUA-KIN-000001/geofence` |
 | Topic événements geofence | `djua/test/DJUA-KIN-000001/geofence/events` |
 | Topic état | `djua/test/DJUA-KIN-000001/status` |
-| Taille du buffer MQTT | 1024 octets |
+| Client MQTT | ESP-MQTT natif de l'ESP32 |
+| QoS de publication | 1 (accusé de réception du broker) |
+| File persistante | LittleFS, 512 messages par défaut |
 
 Lors d'une connexion réussie, l'ESP32 publie `online` sur le topic d'état avec conservation du message. Un Last Will MQTT publiera `offline` sur ce même topic si la connexion disparaît de manière anormale.
 
-Les télémétries sont publiées sans conservation et avec le QoS par défaut de PubSubClient, soit QoS 0. Une télémétrie émise pendant une coupure reste perdue. Pour le geofencing, le dernier contrôle est retenu par le broker et une transition non envoyée est gardée temporairement en RAM jusqu'à la reconnexion MQTT.
+Les télémétries et les contrôles geofence sont écrits dans une file LittleFS avant leur publication MQTT QoS 1. Chaque message contient un `message_id` persistant et n'est retiré de la file qu'après l'accusé de réception du broker. L'API utilise également QoS 1 avec une session MQTT persistante : le broker peut donc lui remettre les messages reçus pendant une indisponibilité de l'API. Une répétition QoS 1 est possible après une coupure, mais l'API déduplique les messages par `message_id`. La file est limitée par `MQTT_QUEUE_MAX_MESSAGES`; son dimensionnement doit couvrir la durée maximale de coupure attendue. Le broker de production doit lui aussi activer sa persistance.
 
 ### Backend HTTP optionnel
 
@@ -277,8 +279,8 @@ Au démarrage, l'API :
 
 1. crée un client MQTT Paho ;
 2. se connecte de manière asynchrone au broker ;
-3. s'abonne par défaut à `djua/test/+/telemetry` ;
-4. accepte ainsi les télémétries de plusieurs identifiants de kit.
+3. s'abonne par défaut à `djua/test/+/#` ;
+4. accepte ainsi les télémétries, contrôles geofence et événements geofence de plusieurs identifiants de kit.
 
 Le fichier `api/.env` n'est pas chargé automatiquement par l'application. Pour l'utiliser directement avec Uvicorn, il faut lancer :
 
@@ -297,8 +299,8 @@ Lorsqu'un message arrive, l'API :
 3. utilise `kit_id` comme identifiant, ou l'extrait du topic si `kit_id` est absent ;
 4. ajoute l'heure UTC de réception calculée par le serveur ;
 5. ajoute un numéro de séquence interne ;
-6. met à jour la dernière télémétrie du kit ;
-7. ajoute le message à l'historique global en mémoire.
+6. met à jour séparément la dernière télémétrie ou le dernier état geofence du kit ;
+7. ajoute le message à l'historique global en mémoire avec son type (`telemetry`, `geofence` ou `geofence_event`).
 
 L'accès à cet état partagé est protégé par un verrou entre le thread MQTT et les requêtes de l'API.
 
@@ -310,7 +312,10 @@ L'accès à cet état partagé est protégé par un verrou entre le thread MQTT 
 | `GET /devices` | Liste les kits ayant déjà transmis depuis le dernier démarrage |
 | `GET /devices/{device_id}/telemetry/latest` | Retourne la dernière télémétrie du kit, ou 404 si elle n'existe pas |
 | `GET /devices/{device_id}/telemetry?limit=100` | Retourne les derniers messages du kit |
-| `WS /ws/telemetry` | Envoie l'historique présent puis les nouveaux messages, avec vérification toutes les 500 ms |
+| `GET /devices/{device_id}/geofence/latest` | Retourne le dernier état ou événement geofence du kit |
+| `GET /devices/{device_id}/geofence?limit=100` | Retourne les contrôles et événements geofence récents du kit |
+| `WS /ws/telemetry` | Envoie l'historique de télémétrie et les nouveaux messages, avec vérification toutes les 500 ms |
+| `WS /ws/geofence` | Envoie l'historique geofence et les nouveaux contrôles/événements |
 
 Le champ `status` de `/health` reste actuellement égal à `ok`, même si la sous-partie `mqtt.connected` vaut `false`. Il faut donc contrôler explicitement `mqtt.connected` pour connaître l'état de la liaison au broker.
 
@@ -358,7 +363,7 @@ Le code utilise les bibliothèques suivantes :
 - `TinyGPSPlus` ;
 - `Rtc by Makuna` pour le DS1302 ;
 - `ArduinoJson` ;
-- `PubSubClient` ;
+- ESP-MQTT natif de l'ESP32 et LittleFS ;
 - les bibliothèques ESP32 intégrées `WiFi`, `HTTPClient` et `Wire`.
 
 Le dépôt ne contient actuellement ni `platformio.ini` ni liste Arduino formelle des versions. La reproductibilité de la compilation du firmware dépend donc des bibliothèques installées dans l'environnement Arduino utilisé.
